@@ -1,0 +1,38 @@
+======================================================================
+BACKTEST REPORT: 50 Most Recent S&P 500 Additions vs S&P 500
+======================================================================
+Period: 2015-01-02 to 2018-12-21
+Strategy: Equal-weight portfolio of 50 most recent S&P 500 additions
+Rebalance: Annually (start of each year)
+Benchmark: SPY (S&P 500)
+
+----------------------------------------------------------------------
+Metric                    Portfolio            S&P 500             
+----------------------------------------------------------------------
+Total Return              18.1%                17.4%               
+CAGR                      4.3%                 4.1%                
+Volatility (ann.)         13.3%                13.4%               
+Sharpe Ratio              0.10                 0.08                
+Max Drawdown              -21.0%               -17.5%              
+----------------------------------------------------------------------
+
+ANNUAL RETURNS:
+--------------------------------------------------
+Year       Portfolio       S&P 500         Excess         
+--------------------------------------------------
+2015       -2.6%           -0.7%           -1.9%          
+2016       10.8%           11.2%           -0.5%          
+2017       12.0%           18.4%           -6.4%          
+2018       -2.4%           -10.4%          +7.9%          
+--------------------------------------------------
+
+REBALANCE LOG:
+----------------------------------------------------------------------
+  2015-01-02: 43 holdings
+    Sample: RCL, URI, UHS, DISCK, MLM, AMG, XEC, AVGO, UAA, NAVI ... (+33 more)
+  2016-01-04: 42 holdings
+    Sample: CHD, CSRA, ILMN, SYF, HPE, VRSK, NWS, UAL, ATVI, PYPL ... (+32 more)
+  2017-01-03: 45 holdings
+    Sample: MAA, EVHC, COTY, COO, CHTR, MTD, FTV, LNT, ALB, FBHS ... (+35 more)
+  2018-01-02: 50 holdings
+    Sample: NCLH, CDNS, SBAC, DWDP, IQV, BHF, RMD, PKG, MGM, DRE ... (+40 more)
