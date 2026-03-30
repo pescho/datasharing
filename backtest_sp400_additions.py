@@ -413,33 +413,37 @@ def _download_yfinance(tickers, start, end):
     return prices
 
 
+def _generate_trading_dates(start_year, start_month, start_day, end_year, end_month, end_day):
+    """Generate US trading day dates (Mon-Fri, excluding major holidays)."""
+    import datetime
+    dates = []
+    d = datetime.date(start_year, start_month, start_day)
+    end = datetime.date(end_year, end_month, end_day)
+    while d <= end:
+        if d.weekday() < 5:  # Mon-Fri
+            dates.append(d)
+        d += datetime.timedelta(days=1)
+    return dates
+
+
 def _download_pystock_data(tickers):
     """
-    Fallback: download stock data from pystock-data on GitHub.
-    Covers ~6000 US stocks from 2015-03 to 2017-03.
+    Fallback: download stock data from pystock-data on GitHub (gh-pages branch).
+    Covers ~6000 US stocks from 2009 (via initial files) to 2017-03-31.
+    Files are at: raw.githubusercontent.com/eliangcs/pystock-data/gh-pages/{year}/{YYYYMMDD}.tar.gz
     """
     import tarfile
     import io
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     needed = set(tickers)
-
-    def get_file_list(year):
-        url = f"https://api.github.com/repos/eliangcs/pystock-data/contents/{year}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        resp = urllib.request.urlopen(req, timeout=30)
-        data = json.loads(resp.read())
-        daily = [f for f in data
-                 if f["name"].startswith("20") and f["name"].endswith(".tar.gz")]
-        initial = [f for f in data if "initial" in f["name"]]
-        return ([(f["name"], f["download_url"]) for f in daily],
-                [(f["name"], f["download_url"]) for f in initial])
+    BASE = "https://raw.githubusercontent.com/eliangcs/pystock-data/gh-pages"
 
     def download_one(name_url):
         name, url = name_url
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            resp = urllib.request.urlopen(req, timeout=60)
+            resp = urllib.request.urlopen(req, timeout=120)
             raw = resp.read()
             tar = tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz")
             rows = []
@@ -457,32 +461,54 @@ def _download_pystock_data(tickers):
         except Exception:
             return []
 
-    print("  Downloading from pystock-data on GitHub (covers 2015-2017)...")
-    all_files = []
-    for year in [2015, 2016, 2017]:
-        try:
-            daily, initial = get_file_list(year)
-            all_files.extend(daily)
-            all_files.extend(initial)
-            print(f"    {year}: {len(daily)} daily + {len(initial)} initial files")
-        except Exception as e:
-            print(f"    {year}: failed ({e})")
+    print("  Downloading from pystock-data on GitHub (covers 2009-2017)...")
 
-    if not all_files:
-        return pd.DataFrame()
+    # Generate URLs directly (avoids GitHub API rate limits)
+    all_files = []
+
+    # Initial files in 2015/ (contain 2009-2015 historical data, ~40MB each)
+    for i in range(1, 4):
+        name = f"000{i}_initial.tar.gz"
+        url = f"{BASE}/2015/{name}"
+        all_files.append((name, url))
+    print(f"    Initial files: 3 (historical 2009-2015)")
+
+    # Daily files: 2015-03-23 to 2015-12-31, 2016-01-04 to 2016-12-30, 2017-01-02 to 2017-03-31
+    daily_ranges = [
+        (2015, 3, 23, 2015, 12, 31),
+        (2016, 1, 1, 2016, 12, 31),
+        (2017, 1, 1, 2017, 3, 31),
+    ]
+    for sy, sm, sd, ey, em, ed in daily_ranges:
+        dates = _generate_trading_dates(sy, sm, sd, ey, em, ed)
+        year_files = []
+        for d in dates:
+            name = f"{d.strftime('%Y%m%d')}.tar.gz"
+            url = f"{BASE}/{d.year}/{name}"
+            year_files.append((name, url))
+        all_files.extend(year_files)
+        print(f"    {sy}: ~{len(year_files)} daily files")
+
+    print(f"    Total: {len(all_files)} files to download")
 
     all_rows = []
     done = 0
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    failed = 0
+    with ThreadPoolExecutor(max_workers=10) as pool:
         futs = {pool.submit(download_one, f): f[0] for f in all_files}
         for fut in as_completed(futs):
             rows = fut.result()
-            all_rows.extend(rows)
+            if rows:
+                all_rows.extend(rows)
+            else:
+                failed += 1
             done += 1
             if done % 100 == 0:
-                print(f"    {done}/{len(all_files)} files, {len(all_rows)} rows")
+                print(f"    {done}/{len(all_files)} files, {len(all_rows)} rows "
+                      f"({failed} skipped)")
 
-    print(f"    Done: {len(all_rows)} rows from {done} files")
+    print(f"    Done: {len(all_rows)} rows from {done - failed} files "
+          f"({failed} weekend/holiday/failed)")
     if not all_rows:
         return pd.DataFrame()
 
@@ -506,6 +532,76 @@ def _load_sp500_cache(tickers):
         return pd.DataFrame()
     print(f"    Found {len(overlap)} overlapping tickers (incl. SPY)")
     return sp500[overlap]
+
+
+def _download_github_kaggle_sp500(tickers):
+    """Download Kaggle S&P 500 stock data + SP500 index as SPY proxy from GitHub."""
+    all_data = []
+
+    # 1. Kaggle S&P 500 dataset (individual stocks, 2013-2018)
+    kaggle_url = ("https://raw.githubusercontent.com/MarcosBayas95/"
+                  "DEBER-1-U3-all_stocks_5yr.csv/main/all_stocks_5yr.csv")
+    print("  Downloading Kaggle S&P 500 stock data from GitHub...")
+    try:
+        req = urllib.request.Request(kaggle_url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=120)
+        data = resp.read().decode("utf-8")
+        reader = csv.DictReader(data.strip().split("\n"))
+        needed = set(tickers)
+        rows = []
+        for row in reader:
+            name = row.get("Name", "")
+            if name in needed:
+                try:
+                    rows.append((row["date"], name, float(row["close"])))
+                except (ValueError, KeyError):
+                    pass
+        if rows:
+            df = pd.DataFrame(rows, columns=["date", "ticker", "close"])
+            df["date"] = pd.to_datetime(df["date"])
+            kaggle_prices = df.pivot_table(index="date", columns="ticker", values="close")
+            all_data.append(kaggle_prices)
+            print(f"    Kaggle: {kaggle_prices.shape[1]} tickers, "
+                  f"{kaggle_prices.index[0].date()} to {kaggle_prices.index[-1].date()}")
+    except Exception as e:
+        print(f"    Kaggle download failed: {e}")
+
+    # 2. S&P 500 daily index data as SPY proxy (1950-2018)
+    index_url = "https://raw.githubusercontent.com/vijinho/sp500/master/csv/sp500.csv"
+    print("  Downloading S&P 500 daily index data as SPY proxy...")
+    try:
+        req = urllib.request.Request(index_url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=120)
+        data = resp.read().decode("utf-8")
+        reader = csv.DictReader(data.strip().split("\n"))
+        rows = []
+        for row in reader:
+            try:
+                rows.append((row["Date"].strip('"'), float(row["Adj Close"])))
+            except (ValueError, KeyError):
+                pass
+        if rows:
+            df = pd.DataFrame(rows, columns=["date", "SPY"])
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date")
+            df = df[~df.index.duplicated(keep="first")]
+            all_data.append(df)
+            print(f"    SP500 index (as SPY): {df.index[0].date()} to {df.index[-1].date()}")
+    except Exception as e:
+        print(f"    SP500 index download failed: {e}")
+
+    if not all_data:
+        return pd.DataFrame()
+
+    result = all_data[0]
+    for extra in all_data[1:]:
+        result = result.combine_first(extra)
+        for col in extra.columns:
+            if col not in result.columns:
+                result[col] = extra[col]
+
+    result.sort_index(inplace=True)
+    return result
 
 
 def download_prices(tickers, start, end):
@@ -535,27 +631,26 @@ def download_prices(tickers, start, end):
         print(f"  yfinance success: {prices.shape[1]} tickers, {prices.shape[0]} days")
         return prices.loc[start:end]
 
-    # Approach 2: pystock-data on GitHub + S&P 500 cache
+    # Approach 2: pystock-data on GitHub + Kaggle/index data + S&P 500 cache
     print("yfinance unavailable. Falling back to GitHub-hosted datasets...")
     pystock = _download_pystock_data(tickers)
+    kaggle_data = _download_github_kaggle_sp500(tickers)
     sp500_overlap = _load_sp500_cache(tickers)
 
-    if pystock.empty and sp500_overlap.empty:
+    sources = [df for df in [pystock, kaggle_data, sp500_overlap] if not df.empty]
+    if not sources:
         print("ERROR: Could not download price data from any source.")
         print("       Run 'python fetch_sp400_data.py' on a machine with internet access,")
         print("       then copy the data_cache_sp400/ directory here.")
         sys.exit(1)
 
-    # Merge: pystock data preferred, SP500 cache fills gaps (especially SPY)
-    if not pystock.empty and not sp500_overlap.empty:
-        prices = pystock.combine_first(sp500_overlap)
-        for col in sp500_overlap.columns:
+    # Merge all sources: pystock preferred, then Kaggle, then SP500 cache
+    prices = sources[0]
+    for extra in sources[1:]:
+        prices = prices.combine_first(extra)
+        for col in extra.columns:
             if col not in prices.columns:
-                prices[col] = sp500_overlap[col]
-    elif not pystock.empty:
-        prices = pystock
-    else:
-        prices = sp500_overlap
+                prices[col] = extra[col]
 
     prices.sort_index(inplace=True)
 
@@ -774,10 +869,13 @@ def generate_report(results, metrics, rebalance_log):
     lines.append("DATA NOTES:")
     lines.append("-" * 70)
     lines.append("  S&P 400 MidCap additions compiled from S&P Dow Jones Indices press")
-    lines.append("  releases (PR Newswire) and Wikipedia. Price data sourced from")
-    lines.append("  pystock-data (GitHub, covers 2015-03 to 2017-03) and S&P 500")
-    lines.append("  historical cache (covers overlapping tickers through 2018-12).")
-    lines.append("  After 2017-03, only tickers also in the S&P 500 cache have data,")
+    lines.append("  releases (PR Newswire) and Wikipedia. Price data sourced from:")
+    lines.append("  - pystock-data (GitHub, ~6000 US stocks, initial files 2009-2015,")
+    lines.append("    daily files 2015-03 to 2017-03)")
+    lines.append("  - Kaggle S&P 500 dataset (GitHub mirror, ~500 stocks, 2013-2018)")
+    lines.append("  - S&P 500 daily index (vijinho/sp500 on GitHub, as SPY proxy,")
+    lines.append("    1950-2018)")
+    lines.append("  After 2017-03, only stocks overlapping with S&P 500 have data,")
     lines.append("  so late-2017 and 2018 results reflect a smaller subset of holdings.")
     lines.append("  For a full 2015-2025 backtest, run 'python fetch_sp400_data.py' on")
     lines.append("  a machine with internet access to download complete price data.")

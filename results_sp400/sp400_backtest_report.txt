@@ -38,10 +38,13 @@ REBALANCE LOG:
 DATA NOTES:
 ----------------------------------------------------------------------
   S&P 400 MidCap additions compiled from S&P Dow Jones Indices press
-  releases (PR Newswire) and Wikipedia. Price data sourced from
-  pystock-data (GitHub, covers 2015-03 to 2017-03) and S&P 500
-  historical cache (covers overlapping tickers through 2018-12).
-  After 2017-03, only tickers also in the S&P 500 cache have data,
+  releases (PR Newswire) and Wikipedia. Price data sourced from:
+  - pystock-data (GitHub, ~6000 US stocks, initial files 2009-2015,
+    daily files 2015-03 to 2017-03)
+  - Kaggle S&P 500 dataset (GitHub mirror, ~500 stocks, 2013-2018)
+  - S&P 500 daily index (vijinho/sp500 on GitHub, as SPY proxy,
+    1950-2018)
+  After 2017-03, only stocks overlapping with S&P 500 have data,
   so late-2017 and 2018 results reflect a smaller subset of holdings.
   For a full 2015-2025 backtest, run 'python fetch_sp400_data.py' on
   a machine with internet access to download complete price data.
